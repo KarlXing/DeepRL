@@ -19,10 +19,10 @@ def a2c_pixel(**kwargs):
     config.optimizer_fn = lambda params: torch.optim.RMSprop(params, lr=1e-4, alpha=0.99)
     config.network_fn = lambda: CategoricalActorCriticNet(config.state_dim, config.action_dim, NatureConvBody())
     config.state_normalizer = ImageNormalizer()
-    config.reward_normalizer = RescaleNormalizer()
+    config.reward_normalizer = SignNormalizer()
     config.discount = 0.99
-    # config.use_gae = True
-    # config.gae_tau = 1.0s
+    config.use_gae = True
+    config.gae_tau = 1.0
     config.entropy_weight = 0.01
     config.rollout_length = 5
     config.gradient_clip = 5

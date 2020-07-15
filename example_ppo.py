@@ -8,17 +8,17 @@ def ppo_pixel(**kwargs):
 
     config.task_fn = lambda: Task(config.game, num_envs=config.num_workers)
     config.eval_env = Task(config.game)
-    config.num_workers = 8
-    config.optimizer_fn = lambda params: torch.optim.Adam(params, lr=2.5e-4)
+    config.num_workers = 16
+    config.optimizer_fn = lambda params: torch.optim.RMSprop(params, lr=2.5e-4)
     config.network_fn = lambda: CategoricalActorCriticNet(config.state_dim, config.action_dim, NatureConvBody())
     config.state_normalizer = ImageNormalizer()
-    config.reward_normalizer = RescaleNormalizer()
+    config.reward_normalizer = SignNormalizer()
     config.discount = 0.99
-    config.use_gae = False
-    # config.gae_tau = 0.95
+    config.use_gae = True
+    config.gae_tau = 0.95
     config.entropy_weight = 0.01
     config.gradient_clip = 0.5
-    config.rollout_length = 128
+    config.rollout_length = 5
     config.optimization_epochs = 4
     config.mini_batch_size = config.rollout_length * config.num_workers // 4
     config.ppo_ratio_clip = 0.1
