@@ -7,41 +7,51 @@
 from ..network import *
 from ..component import *
 from .BaseAgent import *
+from ..utils import tensor
 
 
 class A2CAgent(BaseAgent):
-    def __init__(self, config):
+    def __init__(self, config, network):
         BaseAgent.__init__(self, config)
         self.config = config
         self.task = config.task_fn()
-        self.network = config.network_fn()
+        self.network = network
         self.optimizer = config.optimizer_fn(self.network.parameters())
         self.total_steps = 0
-        self.states = self.task.reset()
+        self.states = tensor(self.task.reset())
 
     def step(self):
         config = self.config
         storage = Storage(config.rollout_length)
         states = self.states
         for _ in range(config.rollout_length):
-            prediction = self.network(config.state_normalizer(states))
-            next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
+            prediction = self.network(states)
+            # print(prediction[0].shape)
+            next_states, rewards, terminals, info = self.task.step(to_np(prediction[0]))
             self.record_online_return(info)
-            rewards = config.reward_normalizer(rewards)
-            storage.add(prediction)
-            storage.add({'r': tensor(rewards).unsqueeze(-1),
-                         'm': tensor(1 - terminals).unsqueeze(-1)})
+            # rewards = config.reward_normalizer(rewards)
+            # storage.add(prediction)
+            storage.add({'r': tensor(rewards),
+                         'm': tensor(1 - terminals),
+                         'a': prediction[0],
+                         'log_pi_a': prediction[1],
+                         'ent': prediction[3],
+                         'v': prediction[2]})
 
-            states = next_states
+            states = tensor(next_states)
             self.total_steps += config.num_workers
 
         self.states = states
-        prediction = self.network(config.state_normalizer(states))
-        storage.add(prediction)
+        prediction = self.network(states)
+        # storage.add(prediction)
+        storage.add({'a': prediction[0],
+                     'log_pi_a': prediction[1],
+                     'ent': prediction[3],
+                     'v': prediction[2]})        
         storage.placeholder()
 
-        advantages = tensor(np.zeros((config.num_workers, 1)))
-        returns = prediction['v'].detach()
+        advantages = tensor(np.zeros((config.num_workers)))
+        returns = prediction[2].detach()
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
             if not config.use_gae:
@@ -53,6 +63,9 @@ class A2CAgent(BaseAgent):
             storage.ret[i] = returns.detach()
 
         log_prob, value, returns, advantages, entropy = storage.cat(['log_pi_a', 'v', 'ret', 'adv', 'ent'])
+        # print(log_prob.shape)
+        # print(value.shape)
+        # print(advantages.shape)
         policy_loss = -(log_prob * advantages).mean()
         value_loss = 0.5 * (returns - value).pow(2).mean()
         entropy_loss = entropy.mean()

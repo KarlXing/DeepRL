@@ -6,6 +6,7 @@
 
 from .network_utils import *
 from .network_bodies import *
+from torch.distributions import Categorical
 
 
 class VanillaNet(nn.Module, BaseNet):
@@ -214,45 +215,45 @@ class GaussianActorCriticNet(nn.Module, BaseNet):
                 'v': v}
 
 
-class CategoricalActorCriticNet(nn.Module, BaseNet):
-    def __init__(self,
-                 state_dim,
-                 action_dim,
-                 phi_body=None,
-                 actor_body=None,
-                 critic_body=None):
-        super(CategoricalActorCriticNet, self).__init__()
-        if phi_body is None: phi_body = DummyBody(state_dim)
-        if actor_body is None: actor_body = DummyBody(phi_body.feature_dim)
-        if critic_body is None: critic_body = DummyBody(phi_body.feature_dim)
-        self.phi_body = phi_body
-        self.actor_body = actor_body
-        self.critic_body = critic_body
-        self.fc_action = layer_init(nn.Linear(actor_body.feature_dim, action_dim), 1e-3)
-        self.fc_critic = layer_init(nn.Linear(critic_body.feature_dim, 1), 1e-3)
+# class CategoricalActorCriticNet(nn.Module, BaseNet):
+#     def __init__(self,
+#                  state_dim,
+#                  action_dim,
+#                  phi_body=None,
+#                  actor_body=None,
+#                  critic_body=None):
+#         super(CategoricalActorCriticNet, self).__init__()
+#         if phi_body is None: phi_body = DummyBody(state_dim)
+#         if actor_body is None: actor_body = DummyBody(phi_body.feature_dim)
+#         if critic_body is None: critic_body = DummyBody(phi_body.feature_dim)
+#         self.phi_body = phi_body
+#         self.actor_body = actor_body
+#         self.critic_body = critic_body
+#         self.fc_action = layer_init(nn.Linear(actor_body.feature_dim, action_dim), 1e-3)
+#         self.fc_critic = layer_init(nn.Linear(critic_body.feature_dim, 1), 1e-3)
 
-        self.actor_params = list(self.actor_body.parameters()) + list(self.fc_action.parameters())
-        self.critic_params = list(self.critic_body.parameters()) + list(self.fc_critic.parameters())
-        self.phi_params = list(self.phi_body.parameters())
+#         self.actor_params = list(self.actor_body.parameters()) + list(self.fc_action.parameters())
+#         self.critic_params = list(self.critic_body.parameters()) + list(self.fc_critic.parameters())
+#         self.phi_params = list(self.phi_body.parameters())
         
-        self.to(Config.DEVICE)
+#         self.to(Config.DEVICE)
 
-    def forward(self, obs, action=None):
-        obs = tensor(obs)
-        phi = self.phi_body(obs)
-        phi_a = self.actor_body(phi)
-        phi_v = self.critic_body(phi)
-        logits = self.fc_action(phi_a)
-        v = self.fc_critic(phi_v)
-        dist = torch.distributions.Categorical(logits=logits)
-        if action is None:
-            action = dist.sample()
-        log_prob = dist.log_prob(action).unsqueeze(-1)
-        entropy = dist.entropy().unsqueeze(-1)
-        return {'a': action,
-                'log_pi_a': log_prob,
-                'ent': entropy,
-                'v': v}
+#     def forward(self, obs, action=None):
+#         obs = tensor(obs)
+#         phi = self.phi_body(obs)
+#         phi_a = self.actor_body(phi)
+#         phi_v = self.critic_body(phi)
+#         logits = self.fc_action(phi_a)
+#         v = self.fc_critic(phi_v)
+#         dist = torch.distributions.Categorical(logits=logits)
+#         if action is None:
+#             action = dist.sample()
+#         log_prob = dist.log_prob(action).unsqueeze(-1)
+#         entropy = dist.entropy().unsqueeze(-1)
+#         return {'a': action,
+#                 'log_pi_a': log_prob,
+#                 'ent': entropy,
+#                 'v': v}
 
 
 class TD3Net(nn.Module, BaseNet):
@@ -291,3 +292,42 @@ class TD3Net(nn.Module, BaseNet):
         q_1 = self.fc_critic_1(self.critic_body_1(x))
         q_2 = self.fc_critic_2(self.critic_body_2(x))
         return q_1, q_2
+
+
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.view(x.size(0), -1)
+
+
+class ConvBody(nn.Module):
+    def __init__(self, input_channels = 1, hidden_size = 512, flatten_size = 64*7*7):
+        super(ConvBody, self).__init__()
+
+        self.main = nn.Sequential(
+            layer_init(nn.Conv2d(input_channels, 32, 8, stride=4), gain=nn.init.calculate_gain('relu')), nn.ReLU(),
+            layer_init(nn.Conv2d(32, 64, 4, stride=2), gain=nn.init.calculate_gain('relu')), nn.ReLU(),
+            layer_init(nn.Conv2d(64, 64, 3, stride=1), gain=nn.init.calculate_gain('relu')), nn.ReLU(), Flatten(),
+            layer_init(nn.Linear(flatten_size, hidden_size), gain=nn.init.calculate_gain('relu')), nn.ReLU())
+
+    def forward(self, x):
+        return self.main(x)
+
+
+class CategoricalActorCriticNet(nn.Module):
+    def __init__(self, input_channels, action_dim,  hidden_size = 512, flatten_size = 64*7*7):
+        super(CategoricalActorCriticNet, self).__init__()
+        self.main = ConvBody(input_channels = input_channels, hidden_size = hidden_size, flatten_size = flatten_size)
+        self.actor = layer_init(nn.Linear(hidden_size, action_dim), gain = 0.001)
+        self.critic = layer_init(nn.Linear(hidden_size, 1), gain=0.001)
+
+    def forward(self, x, action = None):
+        features = self.main(x/255.0)
+        logits = self.actor(features)
+        self.dist = Categorical(logits = logits)
+        if action is None:
+            action = self.dist.sample()
+        action_log_prob = self.dist.log_prob(action)
+        entropy = self.dist.entropy()
+        value = self.critic(features)
+
+        return action, action_log_prob, value.squeeze(-1), entropy

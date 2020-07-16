@@ -5,7 +5,7 @@
 #######################################################################
 
 from deep_rl import *
-
+from deep_rl.network import CategoricalActorCriticNet
 
 def a2c_pixel(**kwargs):
     generate_tag(kwargs)
@@ -27,7 +27,10 @@ def a2c_pixel(**kwargs):
     config.rollout_length = 5
     config.gradient_clip = 5
     config.max_steps = int(2e7)
-    run_steps(A2CAgent(config))
+    device = torch.device('cuda:0')
+    model = CategoricalActorCriticNet(4, 4).to(device)
+
+    run_steps(A2CAgent(config, model))
 
 
 if __name__ == '__main__':

@@ -20,9 +20,14 @@ class BaseNet:
         pass
 
 
-def layer_init(layer, w_scale=1.0):
-    nn.init.orthogonal_(layer.weight.data)
-    layer.weight.data.mul_(w_scale)
+# def layer_init(layer, w_scale=1.0):
+#     nn.init.orthogonal_(layer.weight.data)
+#     layer.weight.data.mul_(w_scale)
+#     nn.init.constant_(layer.bias.data, 0)
+#     return layer
+
+def layer_init(layer, gain = 1):
+    nn.init.orthogonal_(layer.weight.data, gain = gain)
     nn.init.constant_(layer.bias.data, 0)
     return layer
 

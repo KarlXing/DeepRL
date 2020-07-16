@@ -1,4 +1,5 @@
 from deep_rl import *
+from deep_rl.network import CategoricalActorCriticNet
 
 def ppo_pixel(**kwargs):
     generate_tag(kwargs)
@@ -25,7 +26,10 @@ def ppo_pixel(**kwargs):
     config.log_interval = config.rollout_length * config.num_workers
     config.shared_repr = True
     config.max_steps = int(2e7)
-    run_steps(PPOAgent(config))
+    device = torch.device('cuda:0')
+    model = CategoricalActorCriticNet(4, 4).to(device)
+
+    run_steps(PPOAgent(config, model))
 
 if __name__ == '__main__':
     mkdir('log')

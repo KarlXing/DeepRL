@@ -7,14 +7,15 @@
 from ..network import *
 from ..component import *
 from .BaseAgent import *
+from ..utils import tensor
 
 
 class PPOAgent(BaseAgent):
-    def __init__(self, config):
+    def __init__(self, config, network):
         BaseAgent.__init__(self, config)
         self.config = config
         self.task = config.task_fn()
-        self.network = config.network_fn()
+        self.network = network
         if config.shared_repr:
             self.opt = config.optimizer_fn(self.network.parameters())
         else:
@@ -22,7 +23,7 @@ class PPOAgent(BaseAgent):
             self.critic_opt = config.critic_opt_fn(self.network.critic_params)
         self.total_steps = 0
         self.states = self.task.reset()
-        self.states = config.state_normalizer(self.states)
+        self.states = tensor(self.states)
         if config.shared_repr:
             self.lr_scheduler = torch.optim.lr_scheduler.LambdaLR(self.opt, lambda step: 1 - step / config.max_steps)
 
@@ -32,24 +33,32 @@ class PPOAgent(BaseAgent):
         states = self.states
         for _ in range(config.rollout_length):
             prediction = self.network(states)
-            next_states, rewards, terminals, info = self.task.step(to_np(prediction['a']))
+            next_states, rewards, terminals, info = self.task.step(to_np(prediction[0]))
             self.record_online_return(info)
-            rewards = config.reward_normalizer(rewards)
-            next_states = config.state_normalizer(next_states)
-            storage.add(prediction)
-            storage.add({'r': tensor(rewards).unsqueeze(-1),
-                         'm': tensor(1 - terminals).unsqueeze(-1),
+            # rewards = config.reward_normalizer(rewards)
+            next_states = tensor(next_states)
+            # storage.add(prediction)
+            storage.add({'a': prediction[0],
+                         'log_pi_a': prediction[1],
+                         'v': prediction[2],
+                         'ent': prediction[3]})
+            storage.add({'r': tensor(rewards),
+                         'm': tensor(1 - terminals),
                          's': tensor(states)})
             states = next_states
             self.total_steps += config.num_workers
 
         self.states = states
         prediction = self.network(states)
-        storage.add(prediction)
+        # storage.add(prediction)
+        storage.add({'a':prediction[0],
+                     'log_pi_a': prediction[1],
+                     'v': prediction[2],
+                     'ent': prediction[3]})
         storage.placeholder()
 
-        advantages = tensor(np.zeros((config.num_workers, 1)))
-        returns = prediction['v'].detach()
+        advantages = tensor(np.zeros((config.num_workers)))
+        returns = prediction[2].detach()
         for i in reversed(range(config.rollout_length)):
             returns = storage.r[i] + config.discount * storage.m[i] * returns
             if not config.use_gae:
@@ -79,15 +88,15 @@ class PPOAgent(BaseAgent):
                 sampled_advantages = advantages[batch_indices]
 
                 prediction = self.network(sampled_states, sampled_actions)
-                ratio = (prediction['log_pi_a'] - sampled_log_probs_old).exp()
+                ratio = (prediction[1] - sampled_log_probs_old).exp()
                 obj = ratio * sampled_advantages
                 obj_clipped = ratio.clamp(1.0 - self.config.ppo_ratio_clip,
                                           1.0 + self.config.ppo_ratio_clip) * sampled_advantages
-                policy_loss = -torch.min(obj, obj_clipped).mean() - config.entropy_weight * prediction['ent'].mean()
+                policy_loss = -torch.min(obj, obj_clipped).mean() - config.entropy_weight * prediction[3].mean()
 
-                value_loss = 0.5 * (sampled_returns - prediction['v']).pow(2).mean()
+                value_loss = 0.5 * (sampled_returns - prediction[2]).pow(2).mean()
 
-                approx_kl = (sampled_log_probs_old - prediction['log_pi_a']).mean()
+                approx_kl = (sampled_log_probs_old - prediction[1]).mean()
                 if config.shared_repr:
                     self.opt.zero_grad()
                     (policy_loss + value_loss).backward()
